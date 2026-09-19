@@ -4,7 +4,7 @@ export interface WorkflowNode {
   name: string;
   position: { x: number; y: number };
   parameters: Record<string, unknown>;
-  credentials: Record<string, never>;
+  credentials: Record<string, string>;
 }
 export interface Connection {
   id: string;

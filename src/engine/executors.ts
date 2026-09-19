@@ -3,6 +3,7 @@ import type { Data } from './types';
 import { httpRequest } from './http';
 import { createCodeExecutor } from './code';
 import { aiOpenAI, hermesAgent } from './ai';
+import { github, googleSheets, telegram } from './app-connectors';
 
 export interface NodeResult { output: Data; port: string; }
 type Executor = (node: WorkflowNode, input: Data, signal: AbortSignal) => Promise<NodeResult>;
@@ -11,6 +12,9 @@ const codeExecutor = createCodeExecutor();
 
 export const executors: Record<string, Executor> = {
   httpRequest,
+  telegram,
+  github,
+  googleSheets,
   if: async (node, input) => ({ output: input, port: Object.hasOwn(input, String(node.parameters.field)) && input[String(node.parameters.field)] === node.parameters.value ? 'true' : 'false' }),
   manualTrigger: async () => ({ output: {}, port: 'main' }),
   webhook: async (_node, input) => ({ output: input, port: 'main' }),

@@ -7,6 +7,7 @@ test('Run shows running → success and Stop shows cancelled with no browser err
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
+  page.on('dialog', async dialog => { expect(dialog.message()).toContain('Production safety review required'); await dialog.accept(); });
   const pending: http.ServerResponse[] = [];
   const server = http.createServer((req, res) => { req.resume(); pending.push(res); });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
@@ -24,12 +25,15 @@ test('Run shows running → success and Stop shows cancelled with no browser err
     await page.getByTestId('run-workflow').click();
     const httpNode = page.locator('[data-id="run3"] [data-testid="node-status"]');
     await expect(httpNode).toHaveText('running');
+    await expect(page.getByTestId('execution-progress')).toBeVisible();
+    await expect(page.getByTestId('execution-focus-node')).toContainText('httpRequest');
     await expect(page.getByTestId('run-workflow')).toBeDisabled();
     await expect.poll(() => pending.length).toBe(1);
     await page.screenshot({ path: info.outputPath('running.png') });
     pending[0].writeHead(200, { 'Content-Type': 'application/json' }); pending[0].end('{"ok":true}');
     await expect(httpNode).toHaveText('success');
     await expect(page.getByTestId('execution-result')).toContainText('success');
+    await expect(page.getByTestId('execution-progress')).toHaveText('100%');
     await page.screenshot({ path: info.outputPath('success.png') });
     await page.getByTestId('run-workflow').click();
     await expect(httpNode).toHaveText('running');

@@ -11,6 +11,16 @@ const STATUS_CLASS: Record<string, string> = {
   running: 'is-running',
 };
 
+function sortExecutions(items: Execution[]) {
+  return [...items].sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+}
+
+function preferredNode(execution?: Execution) {
+  return execution?.nodeExecutions.find(item => item.status === 'running')?.nodeId
+    ?? execution?.nodeExecutions.find(item => item.status === 'error')?.nodeId
+    ?? '';
+}
+
 function JsonBlock({ data, testId }: { data: unknown; testId: string }) {
   const text = data === undefined ? 'Not recorded by this engine version' : JSON.stringify(data, null, 2);
   return <pre data-testid={testId}>{text}</pre>;
@@ -25,13 +35,29 @@ export default function ExecutionInspector({ workflowId, current }: InspectorPro
   useEffect(() => {
     let disposed = false;
     setHistory([]); setSelected(''); setNodeId(''); setError('');
-    api.executions(workflowId).then(items => { if (!disposed) setHistory(items); }).catch(err => { if (!disposed) setError(String(err)); });
+    api.executions(workflowId).then(items => {
+      if (disposed) return;
+      const merged = sortExecutions(current ? [current, ...items.filter(item => item.executionId !== current.executionId)] : items);
+      setHistory(merged);
+      setSelected(merged[0]?.executionId ?? '');
+      setNodeId(preferredNode(merged[0]));
+    }).catch(err => { if (!disposed) setError(String(err)); });
     return () => { disposed = true; };
-  }, [workflowId, current?.executionId, current?.status]);
+  }, [workflowId]);
+
+  useEffect(() => {
+    if (!current) return;
+    setHistory(items => sortExecutions([current, ...items.filter(item => item.executionId !== current.executionId)]));
+    setSelected(current.executionId);
+    setNodeId(existing => existing || preferredNode(current));
+  }, [current?.executionId, current?.status, current?.sequence]);
 
   const execution = history.find(item => item.executionId === selected);
   const record = execution?.nodeExecutions.find(item => item.nodeId === nodeId);
   const statusClass = STATUS_CLASS[execution?.status ?? ''] ?? '';
+  const totalDuration = execution
+    ? Math.max(0, Date.parse(execution.finishedAt ?? new Date().toISOString()) - Date.parse(execution.startedAt))
+    : 0;
 
   return (
     <section className="execution-inspector" aria-label="Execution inspector">
@@ -50,9 +76,11 @@ export default function ExecutionInspector({ workflowId, current }: InspectorPro
 
       {execution && (
         <>
-          <div className="exec-meta">
+          <div className="exec-meta exec-run-card">
             <span className={`exec-status-chip ${statusClass}`}>{execution.status}</span>
-            <span><b>{execution.executionId}</b></span>
+            <span>Run ID <b>{execution.executionId}</b></span>
+            <span>Started <b>{execution.startedAt}</b></span>
+            <span>Elapsed <b>{totalDuration} ms</b></span>
           </div>
 
           <label>Node
@@ -66,7 +94,7 @@ export default function ExecutionInspector({ workflowId, current }: InspectorPro
             <div>
               <div className="exec-meta">
                 <span className={`exec-status-chip ${STATUS_CLASS[record.status] ?? ''}`}>{record.status}</span>
-                <span>Duration: <b><span data-testid="inspect-duration">{record.duration}</span> ms</b></span>
+                <span>Duration: <b><span data-testid="inspect-duration">{record.duration} ms</span></b></span>
                 <span>Started: <b>{record.startedAt || 'Not started'}</b></span>
                 <span>Finished: <b>{record.finishedAt || 'Not finished'}</b></span>
               </div>

@@ -8,6 +8,85 @@ async function connect(page: Page, source: string, target: string) {
   await to.click();
 }
 
+async function addNode(page: Page, type: string) {
+  await page.getByTestId('open-node-picker').click();
+  await page.getByTestId(`add-${type}`).click();
+}
+
+test('template gallery creates a starter workflow and workspace search finds it', async ({ page, request }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('template-gallery')).toHaveCount(0);
+  await page.getByTestId('template-toggle').click();
+  await expect(page.getByTestId('template-gallery')).toBeVisible();
+  await page.getByTestId('template-landing-page-intake').click();
+  await expect(page.getByTestId('workflow-name')).toHaveValue('Landing Page Intake');
+  await expect(page.getByTestId('canvas-node')).toHaveCount(4);
+  await page.getByLabel('Search workflows').fill('landing page');
+  await expect(page.getByTestId('workflow-list').getByRole('button', { name: 'Landing Page Intake', exact: true })).toBeVisible();
+
+  const workflows = await (await request.get('/api/workflows')).json();
+  const created = workflows.find((item: { name: string }) => item.name === 'Landing Page Intake');
+  expect(created.nodes).toHaveLength(4);
+  expect(created.connections).toHaveLength(3);
+});
+
+test('node context menu can quick-configure, duplicate and delete nodes', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('create-workflow').click();
+  await expect(page.locator('.react-flow__minimap')).toBeVisible();
+  await page.getByTestId('toggle-minimap').click();
+  await expect(page.locator('.react-flow__minimap')).toHaveCount(0);
+  await page.getByTestId('toggle-minimap').click();
+  await expect(page.locator('.react-flow__minimap')).toBeVisible();
+  await addNode(page, 'manualTrigger');
+  await expect(page.getByTestId('canvas-node')).toHaveCount(1);
+  const firstId = await page.locator('.react-flow__node').first().getAttribute('data-id');
+  await page.locator(`[data-id="${firstId}"]`).click({ button: 'right' });
+  await expect(page.getByTestId('node-context-menu')).toBeVisible();
+  await page.getByRole('menuitem', { name: 'Quick config' }).click();
+  await expect(page.getByTestId('quick-config-popover')).toBeVisible();
+  const quickConfigBox = (await page.getByTestId('quick-config-popover').boundingBox())!;
+  const quickConfigHeaderBox = (await page.getByTestId('quick-config-drag').boundingBox())!;
+  await page.mouse.move(quickConfigHeaderBox.x + 120, quickConfigHeaderBox.y + 18);
+  await page.mouse.down();
+  await page.mouse.move(quickConfigHeaderBox.x + 190, quickConfigHeaderBox.y + 66, { steps: 8 });
+  await page.mouse.up();
+  const movedQuickConfigBox = (await page.getByTestId('quick-config-popover').boundingBox())!;
+  expect(movedQuickConfigBox.x).toBeGreaterThan(quickConfigBox.x + 40);
+  expect(movedQuickConfigBox.y).toBeGreaterThan(quickConfigBox.y + 30);
+  await page.getByTestId('quick-config-popover').getByLabel('Note').fill('Configured from quick popover');
+  await page.getByRole('button', { name: 'Open full config' }).click();
+  await expect(page.getByTestId('param-note')).toHaveValue('Configured from quick popover');
+  await page.locator(`[data-id="${firstId}"] [data-testid="node-add-next"]`).click();
+  await expect(page.getByTestId('node-picker')).toBeVisible();
+  await page.getByTestId('add-set').click();
+  await expect(page.getByTestId('canvas-node')).toHaveCount(2);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  const addedId = await page.locator('.react-flow__node').last().getAttribute('data-id');
+  await page.locator(`[data-id="${addedId}"]`).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Duplicate' }).click();
+  await expect(page.getByTestId('canvas-node')).toHaveCount(3);
+  const duplicateId = await page.locator('.react-flow__node').last().getAttribute('data-id');
+  await page.locator(`[data-id="${duplicateId}"]`).click({ button: 'right' });
+  await page.getByRole('menuitem', { name: 'Delete' }).click();
+  await expect(page.getByTestId('canvas-node')).toHaveCount(2);
+});
+
+test('edge context menu inserts a node between connected steps', async ({ page }) => {
+  await page.goto('/');
+  await page.getByTestId('create-workflow').click();
+  await addNode(page, 'manualTrigger');
+  await addNode(page, 'set');
+  const ids = await page.locator('.react-flow__node').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-id')!));
+  await connect(page, ids[0], ids[1]);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
+  await page.locator('.react-flow__edge').first().click({ button: 'right', force: true });
+  await expect(page.getByTestId('node-picker')).toBeVisible();
+  await page.getByTestId('add-wait').click();
+  await expect(page.getByTestId('canvas-node')).toHaveCount(3);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(2);
+});
+
 test('three configured nodes and edges restore identically; deletion leaves no dangling edges', async ({ page, request }, info) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -20,12 +99,12 @@ test('three configured nodes and edges restore identically; deletion leaves no d
   await page.getByTestId('create-workflow').click();
   const title = `Browser proof ${Date.now()}`;
   await page.getByTestId('workflow-name').fill(title);
-  await page.getByTestId('add-manualTrigger').click();
+  await addNode(page, 'manualTrigger');
   await page.getByTestId('param-note').fill('Manual start configuration');
-  await page.getByTestId('add-set').click();
+  await addNode(page, 'set');
   await page.getByTestId('param-field').fill('greeting');
   await page.getByTestId('param-value').fill('Hello eWe');
-  await page.getByTestId('add-httpRequest').click();
+  await addNode(page, 'httpRequest');
   await page.getByTestId('param-method').selectOption('POST');
   await page.getByTestId('param-url').fill('https://example.com/config-only');
   await page.getByTestId('param-body').fill('{"hello":"world"}');

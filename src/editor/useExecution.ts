@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '../api/client';
 import type { Execution, ExecutionEvent } from '../engine/types';
 
-export interface ActivityItem { id: number; at: string; label: string; detail: string; }
+export interface ActivityItem { id: number; at: string; label: string; detail: string; kind: string; }
 
 // SPEC §10: derive the activity stream from the ordered execution events, not from polling.
 function activity(execution: Execution | undefined): ActivityItem[] {
@@ -11,6 +11,7 @@ function activity(execution: Execution | undefined): ActivityItem[] {
   return execution.events.map(event => ({
     id: event.id,
     at: event.timestamp,
+    kind: event.type.includes('.') ? event.type.split('.').at(-1) || event.type : event.type,
     label: event.type.startsWith('workflow.')
       ? `Workflow ${event.type.replace('workflow.', '')}`
       : `${names.get(event.nodeId || '') || event.nodeId || '?'} ${event.type.replace('node.', '')}`,

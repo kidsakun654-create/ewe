@@ -225,6 +225,51 @@ it('executes a four-node API graph with real HTTP methods, headers, query, JSON/
   } finally { await server.close(); }
 });
 
+it('executes native app connector nodes for Telegram, GitHub and Google Sheets', async () => {
+  const requests: Array<{ method?: string; url?: string; headers: http.IncomingHttpHeaders; body: any }> = [];
+  const server = await localServer(async (req, res) => {
+    const chunks = []; for await (const chunk of req) chunks.push(chunk);
+    const text = Buffer.concat(chunks).toString();
+    requests.push({ method: req.method, url: req.url, headers: req.headers, body: text ? JSON.parse(text) : null });
+    if (req.url?.includes('/dispatches')) {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, url: req.url }));
+  });
+  try {
+    const base = server.url;
+    const workflow = await save([
+      node('start', 'manualTrigger'),
+      node('message', 'set', { field: 'message', value: 'Connector proof' }),
+      node('telegram', 'telegram', { apiBaseUrl: base, botToken: 'bot-secret', chatId: '6892469899', text: '{{$json.message}}' }),
+      node('github', 'github', { apiBaseUrl: base, token: 'github-secret', action: 'repositoryDispatch', owner: 'kdbdevs', repo: 'ewe', eventType: 'connector.proof', clientPayload: '{"message":"{{$node["message"].json.message}}"}' }),
+      node('sheets', 'googleSheets', { apiBaseUrl: base, accessToken: 'google-secret', spreadsheetId: 'sheet123', range: 'Sheet1!A:Z', values: '["{{$node["message"].json.message}}"]' }),
+    ], [['start', 'message'], ['message', 'telegram'], ['telegram', 'github'], ['github', 'sheets']]);
+    const result = await finished(workflow.id, (await launch(workflow.id)).executionId);
+    expect(result.status).toBe('success');
+    expect(requests).toHaveLength(3);
+    expect(requests[0]).toMatchObject({
+      method: 'POST',
+      url: '/botbot-secret/sendMessage',
+      body: { chat_id: '6892469899', text: 'Connector proof', disable_web_page_preview: false },
+    });
+    expect(requests[1]).toMatchObject({
+      method: 'POST',
+      url: '/repos/kdbdevs/ewe/dispatches',
+      body: { event_type: 'connector.proof', client_payload: { message: 'Connector proof' } },
+    });
+    expect(requests[1].headers.authorization).toBe('Bearer github-secret');
+    expect(requests[2].method).toBe('POST');
+    expect(requests[2].url).toContain('/v4/spreadsheets/sheet123/values/Sheet1!A%3AZ:append');
+    expect(requests[2].url).toContain('valueInputOption=USER_ENTERED');
+    expect(requests[2].headers.authorization).toBe('Bearer google-secret');
+    expect(requests[2].body).toEqual({ values: [['Connector proof']] });
+  } finally { await server.close(); }
+});
+
 it('IF routes only the matching output and propagates skips through the other branch', async () => {
   for (const value of ['yes', 'no']) {
     const condition = { ...node('condition', 'set'), type: 'if', parameters: { field: 'answer', operator: 'equals', value: 'yes' } };

@@ -3,20 +3,21 @@ const object = (value: unknown): value is Record<string, unknown> => !!value && 
 const text = (value: unknown) => typeof value === 'string' && value.trim().length > 0 && value.length <= 120;
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const id = (value: unknown): value is string => typeof value === 'string' && /^[\w-]{1,120}$/.test(value);
+const credentialMap = (value: unknown) => object(value) && Object.entries(value).every(([key, credentialId]) => /^[\w-]{1,80}$/.test(key) && id(credentialId));
 
 export function validateWorkflow(value: unknown): string | null {
   if (!object(value) || !id(value.id) || !text(value.name) || value.enabled !== false) return 'Invalid workflow identity or enabled flag';
   if (!Array.isArray(value.nodes) || value.nodes.length > 500 || !Array.isArray(value.connections) || value.connections.length > 2000) return 'Invalid graph size';
   if (!object(value.settings)) return 'Invalid settings';
   const viewport = value.settings.viewport;
-  if (viewport !== undefined && (!object(viewport) || !finite(viewport.x) || !finite(viewport.y) || !finite(viewport.zoom) || viewport.zoom < 0.2 || viewport.zoom > 2)) return 'Invalid viewport';
+  if (viewport !== undefined && (!object(viewport) || !finite(viewport.x) || !finite(viewport.y) || !finite(viewport.zoom) || viewport.zoom < 0.18 || viewport.zoom > 2.2)) return 'Invalid viewport';
   const nodes = new Map<string, string>();
   for (const node of value.nodes) {
     if (!object(node) || !id(node.id) || nodes.has(node.id) || !text(node.name) || typeof node.type !== 'string') return 'Invalid or duplicate node';
     const def = getNodeMetadata(node.type);
     if (!def) return 'Unknown node type';
     if (!object(node.position) || !finite(node.position.x) || !finite(node.position.y)) return 'Invalid node position';
-    if (!object(node.credentials) || Object.keys(node.credentials).length) return 'Credentials are not supported';
+    if (!credentialMap(node.credentials)) return 'Invalid credentials reference';
     if (!object(node.parameters)) return 'Invalid parameters';
     const parameters = node.parameters;
     if (Object.keys(parameters).some(key => !def.fields.some(field => field.key === key))) return 'Unknown parameter';

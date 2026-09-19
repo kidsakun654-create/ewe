@@ -75,3 +75,45 @@ it('real API CRUD preserves a graph across a backend process restart', async () 
     expect(await (await call('')).json()).toEqual([]);
   } finally { await stop(); await rm(dir, { recursive: true, force: true }); }
 }, 30000);
+
+it('cookie login protects API routes and logout revokes the session', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'ewe-auth-test-'));
+  let child: ChildProcess | undefined;
+  let base = '';
+  async function start() {
+    child = spawn(process.execPath, ['--import', 'tsx', 'src/api/server.ts', '--port', '0', '--data', join(dir, 'workflows.json')], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, EWE_BASIC_USER: 'admin', EWE_BASIC_PASS: 'secret' },
+    });
+    base = await new Promise<string>((resolve, reject) => {
+      let output = '';
+      const timer = setTimeout(() => reject(new Error(`Backend startup timeout: ${output}`)), 10000);
+      child!.stderr!.on('data', data => { output += data; });
+      child!.stdout!.on('data', data => {
+        output += data;
+        const match = output.match(/http:\/\/127\.0\.0\.1:\d+/);
+        if (match) { clearTimeout(timer); resolve(match[0]); }
+      });
+      child!.once('exit', code => { clearTimeout(timer); reject(new Error(`Backend exit ${code}: ${output}`)); });
+    });
+  }
+  async function stop() {
+    if (child && child.exitCode === null) { const exited = once(child, 'exit'); child.kill('SIGTERM'); await exited; }
+  }
+  const jsonHeaders = { 'Content-Type': 'application/json' };
+  try {
+    await start();
+    expect((await fetch(base + '/api/workflows')).status).toBe(401);
+    expect(await (await fetch(base + '/api/auth/session')).json()).toEqual({ authenticated: false, authRequired: true });
+    expect((await fetch(base + '/api/auth/login', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ username: 'admin', password: 'wrong' }) })).status).toBe(401);
+    const login = await fetch(base + '/api/auth/login', { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ username: 'admin', password: 'secret' }) });
+    expect(login.status).toBe(200);
+    const cookie = login.headers.get('set-cookie')!.split(';')[0];
+    expect(await (await fetch(base + '/api/workflows', { headers: { Cookie: cookie } })).json()).toEqual([]);
+    const logout = await fetch(base + '/api/auth/logout', { method: 'POST', headers: { ...jsonHeaders, Cookie: cookie }, body: JSON.stringify({}) });
+    expect(logout.status).toBe(200);
+    expect((await fetch(base + '/api/workflows', { headers: { Cookie: cookie } })).status).toBe(401);
+    const basic = Buffer.from('admin:secret').toString('base64');
+    expect(await (await fetch(base + '/api/workflows', { headers: { Authorization: `Basic ${basic}` } })).json()).toEqual([]);
+  } finally { await stop(); await rm(dir, { recursive: true, force: true }); }
+}, 30000);
